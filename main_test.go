@@ -7,9 +7,9 @@ import (
 	"fmt"
 
 	_ "github.com/go-sql-driver/mysql"
+	"github.com/jinzhu/gorm"
 	_ "github.com/lib/pq"
 	_ "github.com/mattn/go-sqlite3"
-	"github.com/jinzhu/gorm"
 
 	"os"
 	"reflect"
@@ -1766,6 +1766,12 @@ func TestScan(t *testing.T) {
 	db.Table("users").Select("name, age").Where("name = ?", 3).Scan(&res)
 	if res.Name != "3" {
 		t.Errorf("Scan into struct should work")
+	}
+
+	var doubleAgeRes result
+	db.Table("users").Select("age + age as age").Where("name = ?", 3).Scan(&doubleAgeRes)
+	if doubleAgeRes.Age != res.Age*2 {
+		t.Errorf("Scan double age as age")
 	}
 
 	var ress []result

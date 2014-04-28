@@ -1,4 +1,4 @@
-package dialect
+package gorm
 
 import (
 	"fmt"
@@ -54,10 +54,29 @@ func (s *postgres) PrimaryKeyTag(value reflect.Value, size int) string {
 	}
 }
 
-func (s *postgres) ReturningStr(key string) (str string) {
+func (s *postgres) ReturningStr(key string) string {
 	return fmt.Sprintf("RETURNING \"%v\"", key)
 }
 
-func (s *postgres) Quote(key string) (str string) {
+func (s *postgres) Quote(key string) string {
 	return fmt.Sprintf("\"%s\"", key)
+}
+
+func (s *postgres) HasTable(scope *Scope, tableName string) bool {
+	var count int
+	newScope := scope.New(nil)
+	newScope.Raw(fmt.Sprintf("SELECT count(*) FROM INFORMATION_SCHEMA.tables where table_name = %v", newScope.AddToVars(tableName)))
+	newScope.DB().QueryRow(newScope.Sql, newScope.SqlVars...).Scan(&count)
+	return count > 0
+}
+
+func (s *postgres) HasColumn(scope *Scope, tableName string, columnName string) bool {
+	var count int
+	newScope := scope.New(nil)
+	newScope.Raw(fmt.Sprintf("SELECT count(*) FROM information_schema.columns WHERE table_name = %v AND column_name = %v",
+		newScope.AddToVars(tableName),
+		newScope.AddToVars(columnName),
+	))
+	newScope.DB().QueryRow(newScope.Sql, newScope.SqlVars...).Scan(&count)
+	return count > 0
 }
