@@ -2,61 +2,89 @@ package gorm
 
 import (
 	"database/sql"
+	"errors"
+	"fmt"
 	"reflect"
-	"strconv"
-	"strings"
-	"time"
 )
 
 type Field struct {
-	Name              string
-	DBName            string
-	Value             interface{}
-	IsBlank           bool
-	IsIgnored         bool
-	Tag               reflect.StructTag
-	SqlTag            string
-	ForeignKey        string
-	BeforeAssociation bool
-	AfterAssociation  bool
-	isPrimaryKey      bool
+	*StructField
+	IsBlank bool
+	Field   reflect.Value
 }
 
-func (f *Field) IsScanner() bool {
-	_, is_scanner := reflect.New(reflect.ValueOf(f.Value).Type()).Interface().(sql.Scanner)
-	return is_scanner
-}
+func (field *Field) Set(value interface{}) (err error) {
+	if !field.Field.IsValid() {
+		return errors.New("field value not valid")
+	}
 
-func (f *Field) IsTime() bool {
-	_, is_time := f.Value.(time.Time)
-	return is_time
-}
+	if !field.Field.CanAddr() {
+		return errors.New("unaddressable value")
+	}
 
-func parseSqlTag(str string) (typ string, addational_typ string, size int) {
-	if str == "-" {
-		typ = str
-	} else if str != "" {
-		tags := strings.Split(str, ";")
-		m := make(map[string]string)
-		for _, value := range tags {
-			v := strings.Split(value, ":")
-			k := strings.TrimSpace(strings.ToUpper(v[0]))
-			if len(v) == 2 {
-				m[k] = v[1]
+	reflectValue, ok := value.(reflect.Value)
+	if !ok {
+		reflectValue = reflect.ValueOf(value)
+	}
+
+	fieldValue := field.Field
+	if reflectValue.IsValid() {
+		if reflectValue.Type().ConvertibleTo(fieldValue.Type()) {
+			fieldValue.Set(reflectValue.Convert(fieldValue.Type()))
+		} else {
+			if fieldValue.Kind() == reflect.Ptr {
+				if fieldValue.IsNil() {
+					fieldValue.Set(reflect.New(field.Struct.Type.Elem()))
+				}
+				fieldValue = fieldValue.Elem()
+			}
+
+			if reflectValue.Type().ConvertibleTo(fieldValue.Type()) {
+				fieldValue.Set(reflectValue.Convert(fieldValue.Type()))
+			} else if scanner, ok := fieldValue.Addr().Interface().(sql.Scanner); ok {
+				err = scanner.Scan(reflectValue.Interface())
 			} else {
-				m[k] = k
+				err = fmt.Errorf("could not convert argument of field %s from %s to %s", field.Name, reflectValue.Type(), fieldValue.Type())
+			}
+		}
+	} else {
+		field.Field.Set(reflect.Zero(field.Field.Type()))
+	}
+
+	field.IsBlank = isBlank(field.Field)
+	return nil
+}
+
+// Fields get value's fields
+func (scope *Scope) Fields() map[string]*Field {
+	if scope.fields == nil {
+		fields := map[string]*Field{}
+		modelStruct := scope.GetModelStruct()
+
+		indirectValue := scope.IndirectValue()
+		isStruct := indirectValue.Kind() == reflect.Struct
+		for _, structField := range modelStruct.StructFields {
+			if field, ok := fields[structField.DBName]; !ok || field.IsIgnored {
+				if isStruct {
+					fields[structField.DBName] = getField(indirectValue, structField)
+				} else {
+					fields[structField.DBName] = &Field{StructField: structField, IsBlank: true}
+				}
 			}
 		}
 
-		if len(m["SIZE"]) > 0 {
-			size, _ = strconv.Atoi(m["SIZE"])
-		}
-
-		if len(m["TYPE"]) > 0 {
-			typ = m["TYPE"]
-		}
-
-		addational_typ = m["NOT NULL"] + " " + m["UNIQUE"]
+		scope.fields = fields
+		return fields
 	}
-	return
+	return scope.fields
+}
+
+func getField(indirectValue reflect.Value, structField *StructField) *Field {
+	field := &Field{StructField: structField}
+	for _, name := range structField.Names {
+		indirectValue = reflect.Indirect(indirectValue).FieldByName(name)
+	}
+	field.Field = indirectValue
+	field.IsBlank = isBlank(indirectValue)
+	return field
 }
